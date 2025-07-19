@@ -1,68 +1,97 @@
-from flask import Flask, request
+import os
 import requests
-from utils.ocr import extract_text_from_image
-from utils.pdf_reader import extract_text_from_pdf
-from utils.ai_engine import get_answer
-from utils.filters import is_question_allowed
+from flask import Flask, request
+import fitz  # PyMuPDF
+import base64
+from PIL import Image
+from io import BytesIO
+import pytesseract
+
+TOKEN = "1773390714:SivnB7yFmA3IItUGShilTQPUFRTE2FEPrOTpurTX"
+OPENROUTER_API_KEY = "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"
+VALID_QUESTIONS = ["2+2", "سوال 1", "سوال ریاضی", "جمع اعداد", "Who is Newton?"]
 
 app = Flask(__name__)
 
-TOKEN = "1773390714:SivnB7yFmA3IItUGShilTQPUFRTE2FEPrOTpurTX"
+@app.route('/')
+def home():
+    return '🤖 ربات مشق‌نویس آرتین فعاله!'
 
-@app.route("/", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
     message = data.get("message", {})
     chat_id = message.get("chat", {}).get("id")
 
-    question = None
+    if "text" in message:
+        handle_text(chat_id, message["text"])
 
-    if "photo" in message:
+    elif "photo" in message:
         file_id = message["photo"][-1]["file_id"]
-        file_url = get_file_url(file_id)
-        if file_url:
-            question = extract_text_from_image(file_url)
-        else:
-            return send_message(chat_id, "خطا در دریافت عکس سلطان 🫠")
+        handle_file(chat_id, file_id, is_photo=True)
 
     elif "document" in message:
         file_id = message["document"]["file_id"]
-        file_url = get_file_url(file_id)
-        if file_url:
-            question = extract_text_from_pdf(file_url)
-        else:
-            return send_message(chat_id, "خطا در دریافت PDF سلطان 😓")
+        handle_file(chat_id, file_id, is_photo=False)
 
-    elif "text" in message:
-        question = message["text"]
+    return "ok"
 
+def handle_text(chat_id, text):
+    if any(q in text for q in VALID_QUESTIONS):
+        answer = ask_openrouter(text)
+        send_message(chat_id, answer)
     else:
-        return send_message(chat_id, "یه فایل یا سوال بفرست سلطان 🫡")
+        send_message(chat_id, "❗️سوال مورد تایید نیست.")
 
-    if not is_question_allowed(question):
-        return send_message(chat_id, "این سوال جزو مشق نیست سلطان 😎")
+def handle_file(chat_id, file_id, is_photo):
+    file_url = get_file_url(file_id)
+    content = requests.get(file_url).content
 
-    answer = get_answer(question)
-    return send_message(chat_id, answer)
+    if is_photo:
+        image = Image.open(BytesIO(content))
+        extracted_text = pytesseract.image_to_string(image, lang='fas+eng')
+    else:
+        extracted_text = extract_text_from_pdf(BytesIO(content))
+
+    if any(q in extracted_text for q in VALID_QUESTIONS):
+        answer = ask_openrouter(extracted_text)
+        send_message(chat_id, f"✅ پاسخ: {answer}")
+    else:
+        send_message(chat_id, "📄 فایل شما دریافت شد ولی سوال مورد تایید نبود.")
+
+def extract_text_from_pdf(file_bytes):
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text
+
+def get_file_url(file_id):
+    # از سرور بله فایل رو دریافت می‌کنیم
+    resp = requests.get(f"https://tapi.bale.ai/bot{TOKEN}/getFile?file_id={file_id}")
+    file_path = resp.json()["result"]["file_path"]
+    return f"https://tapi.bale.ai/file/bot{TOKEN}/{file_path}"
 
 def send_message(chat_id, text):
     url = f"https://tapi.bale.ai/bot{TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text
+    requests.post(url, json={"chat_id": chat_id, "text": text})
+
+def ask_openrouter(question):
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
     }
-    res = requests.post(url, json=payload)
-    return res.text
-
-def get_file_url(file_id):
-    url = f"https://tapi.bale.ai/bot{TOKEN}/getFile?file_id={file_id}"
-    res = requests.get(url).json()
-
-    if res.get("ok") and "result" in res:
-        file_path = res["result"]["file_path"]
-        return f"https://cdn.bale.ai/file/bot{TOKEN}/{file_path}"
-    else:
-        return None
+    data = {
+        "model": "openai/gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": question}],
+        "temperature": 0.7
+    }
+    res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
+    try:
+        return res.json()['choices'][0]['message']['content']
+    except:
+        return "⚠️ مشکلی در دریافت پاسخ از هوش مصنوعی پیش آمد."
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
