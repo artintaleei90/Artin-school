@@ -1,97 +1,95 @@
 import os
-import requests
-from flask import Flask, request
 import fitz  # PyMuPDF
-import base64
-from PIL import Image
-from io import BytesIO
 import pytesseract
+import openai
+from PIL import Image
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from dotenv import load_dotenv
 
-TOKEN = "1773390714:SivnB7yFmA3IItUGShilTQPUFRTE2FEPrOTpurTX"
-OPENROUTER_API_KEY = "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"
-VALID_QUESTIONS = ["2+2", "سوال 1", "سوال ریاضی", "جمع اعداد", "Who is Newton?"]
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY
 
-app = Flask(__name__)
+# جواب گرفتن از مدل زبانی
+def solve_question(text):
+    prompt = f"سوالات زیر را حل کن و مرحله به مرحله توضیح بده:\n{text}"
+    res = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return res.choices[0].message.content
 
-@app.route('/')
-def home():
-    return '🤖 ربات مشق‌نویس آرتین فعاله!'
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.json
-    message = data.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
-
-    if "text" in message:
-        handle_text(chat_id, message["text"])
-
-    elif "photo" in message:
-        file_id = message["photo"][-1]["file_id"]
-        handle_file(chat_id, file_id, is_photo=True)
-
-    elif "document" in message:
-        file_id = message["document"]["file_id"]
-        handle_file(chat_id, file_id, is_photo=False)
-
-    return "ok"
-
-def handle_text(chat_id, text):
-    if any(q in text for q in VALID_QUESTIONS):
-        answer = ask_openrouter(text)
-        send_message(chat_id, answer)
-    else:
-        send_message(chat_id, "❗️سوال مورد تایید نیست.")
-
-def handle_file(chat_id, file_id, is_photo):
-    file_url = get_file_url(file_id)
-    content = requests.get(file_url).content
-
-    if is_photo:
-        image = Image.open(BytesIO(content))
-        extracted_text = pytesseract.image_to_string(image, lang='fas+eng')
-    else:
-        extracted_text = extract_text_from_pdf(BytesIO(content))
-
-    if any(q in extracted_text for q in VALID_QUESTIONS):
-        answer = ask_openrouter(extracted_text)
-        send_message(chat_id, f"✅ پاسخ: {answer}")
-    else:
-        send_message(chat_id, "📄 فایل شما دریافت شد ولی سوال مورد تایید نبود.")
-
-def extract_text_from_pdf(file_bytes):
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    text = ""
+# اگر PDF باشه
+def extract_text_from_pdf(file_path):
+    doc = fitz.open(file_path)
+    all_text = ""
     for page in doc:
-        text += page.get_text()
+        all_text += page.get_text()
+    return all_text
+
+# اگر عکس باشه
+def extract_text_from_image(image_path):
+    img = Image.open(image_path)
+    text = pytesseract.image_to_string(img, lang="eng+fas")
     return text
 
-def get_file_url(file_id):
-    # از سرور بله فایل رو دریافت می‌کنیم
-    resp = requests.get(f"https://tapi.bale.ai/bot{TOKEN}/getFile?file_id={file_id}")
-    file_path = resp.json()["result"]["file_path"]
-    return f"https://tapi.bale.ai/file/bot{TOKEN}/{file_path}"
+# بررسی وجود عدد خاص (مثلاً 13) برای حل فقط اون سوال
+def extract_specific_question(text):
+    lines = text.strip().split("\n")
+    first_line = lines[0]
+    if first_line.strip().isdigit():
+        question_number = int(first_line.strip())
+        rest = "\n".join(lines[1:])
+        questions = [q.strip() for q in rest.split("\n\n") if q.strip()]
+        if 0 < question_number <= len(questions):
+            return questions[question_number - 1]
+        else:
+            return "شماره سوال یافت نشد."
+    else:
+        return text  # همه سوالات حل شوند
 
-def send_message(chat_id, text):
-    url = f"https://tapi.bale.ai/bot{TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": chat_id, "text": text})
+# شروع ربات
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("سلام سلطان 🎓! عکس یا PDF یا متن سوالتو بفرست تا حلش کنم.")
 
-def ask_openrouter(question):
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "openai/gpt-3.5-turbo",
-        "messages": [{"role": "user", "content": question}],
-        "temperature": 0.7
-    }
-    res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
-    try:
-        return res.json()['choices'][0]['message']['content']
-    except:
-        return "⚠️ مشکلی در دریافت پاسخ از هوش مصنوعی پیش آمد."
+# رسیدگی به فایل و عکس و متن
+def handle_file(update: Update, context: CallbackContext):
+    file = update.message.document or update.message.photo[-1]
+    file_path = f"downloads/{file.file_id}"
+    os.makedirs("downloads", exist_ok=True)
+
+    file.get_file().download(file_path)
+
+    if file.mime_type == "application/pdf":
+        raw_text = extract_text_from_pdf(file_path)
+    else:
+        raw_text = extract_text_from_image(file_path)
+
+    final_text = extract_specific_question(raw_text)
+    update.message.reply_text("در حال حل سوال...")
+    answer = solve_question(final_text)
+    update.message.reply_text(answer)
+
+def handle_text(update: Update, context: CallbackContext):
+    user_text = update.message.text
+    final_text = extract_specific_question(user_text)
+    update.message.reply_text("در حال حل سوال...")
+    answer = solve_question(final_text)
+    update.message.reply_text(answer)
+
+# راه‌اندازی
+def main():
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.document | Filters.photo, handle_file))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
+
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    main()
