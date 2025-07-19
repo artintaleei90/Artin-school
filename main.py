@@ -8,10 +8,8 @@ from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
 # بارگذاری تنظیمات
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
+BOT_TOKEN = "7739258515:AAEUXIZ3ySZ9xp9W31l7qr__sZkbf6qcKnE"
+OPENROUTER_API_KEY = "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"
 # تنظیمات OpenRouter
 openai.api_key = OPENROUTER_API_KEY
 openai.api_base = "https://openrouter.ai/api/v1"
