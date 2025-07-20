@@ -95,4 +95,5 @@ def main():
     updater.idle()
 
 if __name__ == "__main__":
-    main()
+    port = int(os.environ.get("PORT", 5000))  # Render پورت رو اینجا می‌ذاره
+    app.run(host="0.0.0.0", port=port)
