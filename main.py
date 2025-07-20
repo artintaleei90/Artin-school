@@ -16,6 +16,9 @@ openai.api_key = OPENROUTER_API_KEY
 openai.api_base = "https://openrouter.ai/api/v1"
 openai.api_type = "open_router"
 
+@app.route("/")
+def home():
+    return "ربات هوش مصنوعی مدرسه آرتین فعال است ✅"
 # تولید پاسخ
 def solve_question(text):
     prompt = f"سوالات زیر را حل کن و با توضیح مرحله به مرحله پاسخ بده:\n{text}"
