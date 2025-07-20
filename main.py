@@ -6,8 +6,9 @@ from PIL import Image
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-
+from flask import Flask
 # بارگذاری تنظیمات
+app = Flask(__name__)
 BOT_TOKEN = "7739258515:AAEUXIZ3ySZ9xp9W31l7qr__sZkbf6qcKnE"
 OPENROUTER_API_KEY = "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"
 # تنظیمات OpenRouter
